@@ -4,10 +4,8 @@ export type Term = {
   en: string;
   ko: string;
   desc: string;
-
-  // ✅ 어떤 CSV 파일에서 왔는지
-  sourceId: string;
-  sourceName: string;
+  sourceId?: string; // optional
+  sourceName?: string; // optional
 };
 
 export type PromptType = 'ko' | 'desc';
