@@ -58,7 +58,7 @@ export default function ResultPage({
 }) {
   const correct = records.filter((r) => r.isCorrect);
   const wrong = records.filter((r) => !r.isCorrect);
-  const perfect = true;
+  const perfect = records.length > 0 && wrong.length === 0;
 
   return (
     <div className="mt-row">
