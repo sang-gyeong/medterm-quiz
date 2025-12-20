@@ -1,5 +1,5 @@
 // src/pages/ImportPage.tsx
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseTermsCSV } from '../lib/csv';
 import type { Term } from '../lib/types';
 
@@ -31,7 +31,12 @@ export default function ImportPage({
   const [items, setItems] = useState<UploadedCSV[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [globalError, setGlobalError] = useState('');
+
+  // ✅ 처음 진입 디폴트 20 유지
   const [questionCount, setQuestionCount] = useState<number>(20);
+
+  // ✅ 사용자가 문제 개수를 직접 바꿨는지(자동 동기화 끊기 위한 플래그)
+  const [isManualCount, setIsManualCount] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -45,6 +50,16 @@ export default function ImportPage({
 
   const totalCount = allTerms.length;
   const canStart = totalCount > 0 && items.some((it) => it.status === 'ok');
+
+  // ✅ 요구사항: 파일 업로드로 전체 단어가 로드되면 questionCount를 totalCount로 자동 세팅
+  // - 단, 사용자가 직접 변경했다면(Manual) 자동 변경하지 않음
+  useEffect(() => {
+    if (!isManualCount) {
+      // totalCount가 0이면 디폴트 20 유지(원하면 0/20 중 택 가능)
+      if (totalCount > 0) setQuestionCount(totalCount);
+      else setQuestionCount(20);
+    }
+  }, [totalCount, isManualCount]);
 
   function allowKey(f: File) {
     return `${f.name}__${f.size}__${f.lastModified}`;
@@ -133,12 +148,14 @@ export default function ImportPage({
       return;
     }
 
+    const now = Date.now();
     const newItems: UploadedCSV[] = toAdd.map((f) => ({
-      id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      // ✅ 여기 Math.random은 이벤트 핸들러(렌더 아님)라 OK
+      id: `${now}_${Math.random().toString(16).slice(2)}`,
       file: f,
       name: f.name,
       size: f.size,
-      addedAt: Date.now(),
+      addedAt: now,
       status: 'ready',
       terms: [],
     }));
@@ -158,6 +175,8 @@ export default function ImportPage({
   function clearAll() {
     setItems([]);
     setGlobalError('');
+    // ✅ 전체 삭제하면 자동모드로 돌아가게(원하면 유지해도 되지만 보통 이게 자연스러움)
+    setIsManualCount(false);
   }
 
   function openPicker() {
@@ -166,14 +185,14 @@ export default function ImportPage({
 
   function startGame() {
     if (!canStart) return;
+
+    // ✅ questionCount는 이미 totalCount로 자동 맞춰져 있음(수동이면 사용자 값)
     onReady(allTerms, questionCount);
   }
 
   const warning =
-    canStart && questionCount > totalCount * 2
-      ? '문제 수가 (뜻/설명 조합)보다 많아서 중복 출제가 꽤 생길 수 있어요.'
-      : canStart && questionCount > totalCount
-      ? '문제 수가 용어 수보다 많으면 일부는 중복 출제됩니다.'
+    canStart && questionCount > totalCount
+      ? '문제 수가 용어 수보다 많으면 중복 없이 출제할 수 없어요. 가능한 만큼만 출제됩니다.'
       : '';
 
   return (
@@ -202,6 +221,31 @@ export default function ImportPage({
                   <div className="mt-help" style={{ marginTop: 4 }}>
                     원하는 문제 수를 입력하세요. (파일별로 최대한 골고루 출제)
                   </div>
+
+                  {/* ✅ 자동 세팅 상태 표시(UX) */}
+                  {!isManualCount ? (
+                    <div
+                      className="mt-help"
+                      style={{ marginTop: 6, opacity: 0.9 }}
+                    >
+                      자동 설정 중 · 현재 로드된 용어 수에 맞춰집니다.
+                    </div>
+                  ) : (
+                    <div
+                      className="mt-help"
+                      style={{ marginTop: 6, opacity: 0.9 }}
+                    >
+                      수동 설정 중 · 자동 동기화가 꺼져있습니다.
+                      <button
+                        type="button"
+                        className="mt-btn mt-btn-ghost"
+                        style={{ marginLeft: 8, padding: '4px 8px' }}
+                        onClick={() => setIsManualCount(false)}
+                      >
+                        자동으로 되돌리기
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -212,11 +256,12 @@ export default function ImportPage({
                   min={1}
                   step={1}
                   value={Number.isFinite(questionCount) ? questionCount : 1}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    setIsManualCount(true); // ✅ 사용자가 건드리면 자동 끔
                     setQuestionCount(
                       Math.max(1, Math.floor(Number(e.target.value || 1)))
-                    )
-                  }
+                    );
+                  }}
                   placeholder="예: 30"
                 />
                 <div className="mt-help" style={{ marginTop: 8 }}>

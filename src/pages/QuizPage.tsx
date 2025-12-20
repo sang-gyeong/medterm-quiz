@@ -3,14 +3,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AnswerRecord, QuizItem, Term } from '../lib/types';
 import { buildQuiz, normalizeAnswer } from '../lib/quiz';
 
+type QuizMode = 'normal' | 'retest';
+
 export default function QuizPage({
   terms,
   questionCount,
   onFinish,
+  mode = 'normal', // ✅ 추가: 재테스트 UX 구분용
 }: {
   terms: Term[];
   questionCount: number;
   onFinish: (records: AnswerRecord[]) => void;
+  mode?: QuizMode;
 }) {
   const quiz: QuizItem[] = useMemo(() => buildQuiz(terms, questionCount), [
     terms,
@@ -32,6 +36,16 @@ export default function QuizPage({
     setIsCorrect(null);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [idx]);
+
+  // ✅ terms/questionCount가 바뀌면(오답 재테스트 시작 등) 진행상태 초기화
+  useEffect(() => {
+    setIdx(0);
+    setInput('');
+    setChecked(false);
+    setIsCorrect(null);
+    setRecords([]);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [terms, questionCount]);
 
   if (!q)
     return (
@@ -59,12 +73,13 @@ export default function QuizPage({
     };
   }
 
-  function checkAnswer() {
-    if (checked) return;
+  function checkAnswer(): AnswerRecord | null {
+    if (checked) return null;
     const rec = currentRecord();
     setChecked(true);
     setIsCorrect(rec.isCorrect);
     setRecords((prev) => [...prev, rec]);
+    return rec;
   }
 
   function next() {
@@ -72,9 +87,33 @@ export default function QuizPage({
 
     const last = idx === quiz.length - 1;
     if (last) {
-      onFinish(records);
+      /**
+       * ✅ 중요: 마지막 문제에서 records state가 아직 업데이트 되기 전에 onFinish(records)를 호출하면
+       * 마지막 AnswerRecord가 빠질 수 있어.
+       *
+       * 따라서:
+       * - 이미 checked=true면, 마지막 record는 records에 들어가있다고 "가정"하는 대신,
+       *   안전하게 길이를 비교해서 누락 가능성 있는 경우 currentRecord로 보정
+       */
+      const expectedLen = quiz.length;
+      const hasAll = records.length >= expectedLen;
+
+      if (hasAll) {
+        onFinish(records);
+      } else {
+        // records가 한 개 부족한 경우를 대비해 보정
+        // (대부분 마지막 문제에서 checkAnswer 직후 next를 누르는 빠른 흐름에서 발생)
+        const fallbackLast = currentRecord();
+        const finalRecords =
+          records.length === expectedLen - 1
+            ? [...records, fallbackLast]
+            : records;
+
+        onFinish(finalRecords);
+      }
       return;
     }
+
     setIdx((v) => v + 1);
   }
 
@@ -89,6 +128,26 @@ export default function QuizPage({
       <div className="mt-card">
         <div className="mt-card-inner">
           <div className="mt-row">
+            {/* ✅ 재테스트 UX 구분 배지 */}
+            {mode === 'retest' && (
+              <div
+                style={{
+                  marginBottom: 10,
+                  padding: '6px 10px',
+                  borderRadius: 999,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  background: 'rgba(250, 204, 21, 0.22)',
+                  border: '1px solid rgba(250, 204, 21, 0.35)',
+                  fontWeight: 700,
+                  width: 'fit-content',
+                }}
+              >
+                🔁 오답 재테스트 모드
+              </div>
+            )}
+
             <div
               style={{
                 display: 'flex',
@@ -164,7 +223,7 @@ export default function QuizPage({
             <div className="mt-actions">
               <button
                 className="mt-btn mt-btn-primary"
-                onClick={checkAnswer}
+                onClick={() => checkAnswer()}
                 disabled={checked || normalizeAnswer(input) === ''}
               >
                 정답 확인

@@ -13,11 +13,9 @@ export type PromptType = 'ko' | 'desc';
 export type QuizItem = {
   id: string;
   termId: string;
-  promptType: PromptType;
+  promptType: 'ko' | 'desc';
   promptText: string;
   answer: string;
-
-  // ✅ 파일 출처(결과에서 확인 가능)
   sourceId: string;
   sourceName: string;
 };
@@ -35,3 +33,13 @@ export type AnswerRecord = {
   sourceId: string;
   sourceName: string;
 };
+
+export type Question = {
+  id: string; // 전역 유니크 (fileId::rowIndex 형태 추천)
+  fileId: string;
+  en: string;
+  ko: string;
+  desc?: string;
+};
+
+export type QuizMode = 'normal' | 'retest';

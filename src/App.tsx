@@ -6,6 +6,12 @@ import ResultPage from './pages/ResultPage';
 import type { AnswerRecord, Term } from './lib/types';
 
 type Route = 'import' | 'quiz' | 'result';
+type QuizMode = 'normal' | 'retest';
+
+function termKey(t: Term): string {
+  // @ts-expect-error
+  return t.id ?? t.en ?? JSON.stringify(t);
+}
 
 export default function App() {
   const [route, setRoute] = useState<Route>('import');
@@ -13,11 +19,28 @@ export default function App() {
   const [records, setRecords] = useState<AnswerRecord[]>([]);
   const [questionCount, setQuestionCount] = useState<number>(20);
 
+  const [quizMode, setQuizMode] = useState<QuizMode>('normal');
+
+  // ✅ 재테스트 회차: 0(일반), 1(첫 재테스트), 2(두 번째 재테스트)...
+  const [retestRound, setRetestRound] = useState(0);
+
+  // ✅ 현재 결과 기준 오답 term 목록(재테스트용)
+  const [wrongTerms, setWrongTerms] = useState<Term[]>([]);
+
+  // ✅ 직전 라운드에서 틀린 termId 목록(= 이번 라운드에서 "두 번 틀림" 판별용)
+  const [prevWrongTermIds, setPrevWrongTermIds] = useState<string[]>([]);
+
+  // ✅ 이번 결과에서 “두 번 틀린 문제” 레코드 (ResultPage에서 따로 표시)
+  const [twiceWrongRecords, setTwiceWrongRecords] = useState<AnswerRecord[]>(
+    []
+  );
+
   const badge = useMemo(() => {
     if (route === 'import') return 'Ready';
-    if (route === 'quiz') return '퀴즈 진행';
+    if (route === 'quiz')
+      return quizMode === 'retest' ? '오답 재테스트' : '퀴즈 진행';
     return '결과';
-  }, [route]);
+  }, [route, quizMode]);
 
   return (
     <div className="mt-shell">
@@ -39,6 +62,11 @@ export default function App() {
               setTerms(t);
               setQuestionCount(n);
               setRecords([]);
+              setWrongTerms([]);
+              setPrevWrongTermIds([]);
+              setTwiceWrongRecords([]);
+              setQuizMode('normal');
+              setRetestRound(0);
               setRoute('quiz');
             }}
           />
@@ -48,8 +76,35 @@ export default function App() {
           <QuizPage
             terms={terms}
             questionCount={questionCount}
+            mode={quizMode}
             onFinish={(recs) => {
               setRecords(recs);
+
+              // ✅ 현재 오답 레코드/termId 수집
+              const wrongRecs = recs.filter((r) => !r.isCorrect);
+              const wrongTermIdSet = new Set(
+                wrongRecs.map((r) => String(r.termId))
+              );
+
+              // ✅ 두 번 틀린 문제(직전 라운드에서도 틀렸던 termId와 교집합)
+              const prevSet = new Set(prevWrongTermIds.map(String));
+              const twice = wrongRecs.filter((r) =>
+                prevSet.has(String(r.termId))
+              );
+              setTwiceWrongRecords(twice);
+
+              // ✅ 오답 term 목록 만들기(재테스트용)
+              const map = new Map<string, Term>();
+              for (const t of terms) map.set(termKey(t), t);
+
+              const wrong = wrongRecs
+                .map((r) => map.get(String(r.termId)) ?? null)
+                .filter(Boolean) as Term[];
+
+              const uniq = new Map<string, Term>();
+              for (const t of wrong) uniq.set(termKey(t), t);
+
+              setWrongTerms([...uniq.values()]);
               setRoute('result');
             }}
           />
@@ -58,10 +113,33 @@ export default function App() {
         {route === 'result' && (
           <ResultPage
             records={records}
+            canRetest={wrongTerms.length > 0}
+            retestCount={wrongTerms.length}
+            retestRound={retestRound}
+            twiceWrongRecords={twiceWrongRecords}
+            onRetest={() => {
+              if (!wrongTerms.length) return;
+
+              // ✅ 다음 라운드(재테스트)에서 “두 번 틀림” 판별을 위해
+              //    ‘이번 라운드 오답 termId’를 저장해 둔다
+              setPrevWrongTermIds(wrongTerms.map((t: any) => String(t.id)));
+
+              setQuizMode('retest');
+              setTerms(wrongTerms);
+              setQuestionCount(wrongTerms.length);
+              setRecords([]);
+              setRetestRound((r) => r + 1);
+              setRoute('quiz');
+            }}
             onRestart={() => {
               setTerms([]);
               setRecords([]);
+              setWrongTerms([]);
+              setPrevWrongTermIds([]);
+              setTwiceWrongRecords([]);
+              setQuizMode('normal');
               setQuestionCount(20);
+              setRetestRound(0);
               setRoute('import');
             }}
           />

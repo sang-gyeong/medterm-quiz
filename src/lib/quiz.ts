@@ -1,7 +1,11 @@
 // src/lib/quiz.ts
-import type { QuizItem, Term, PromptType } from './types';
+import type { QuizItem, Term } from './types';
 
-export function shuffle<T>(arr: T[]): T[] {
+export function normalizeAnswer(s: string) {
+  return (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -10,96 +14,59 @@ export function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function normalizeAnswer(s: string) {
-  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-type PoolItem = { term: Term; promptType: PromptType };
-
-function makePoolForTerms(terms: Term[]): PoolItem[] {
-  const pool: PoolItem[] = [];
-  for (const t of terms) {
-    pool.push({ term: t, promptType: 'ko' });
-    if (t.desc && t.desc.trim().length > 0) {
-      pool.push({ term: t, promptType: 'desc' });
-    }
-  }
-  return shuffle(pool);
-}
-
 /**
- * ✅ 파일별로 최대한 골고루 출제 (±1 수준)
- * - sourceId(파일)별로 pool을 만들고
- * - round-robin으로 1개씩 뽑음
- * - 어떤 파일 pool이 바닥나면: 다시 섞어서 중복 허용(문제 수가 많을 때 대비)
+ * ✅ 규칙
+ * - 문제 중복 방지: termId 당 최대 1문제
+ * - promptText 선택: desc 우선
+ *   - desc가 있으면 desc로 출제 (ko 유무 상관 없음)
+ *   - desc 없고 ko 있으면 ko로 출제
+ *   - 둘 다 없으면 제외
+ * - questionCount가 커도 가능한 만큼만 반환(중복 없이)
  */
 export function buildQuiz(terms: Term[], questionCount: number): QuizItem[] {
-  const safeCount = Math.max(1, Math.floor(questionCount || 1));
-  if (!terms.length) return [];
-
-  // sourceId 별 그룹화
-  const bySource = new Map<string, Term[]>();
+  // 1) termId 기준으로 중복 제거(여러 파일 합칠 때 방어)
+  const uniq = new Map<string, Term>();
   for (const t of terms) {
-    const key = t.sourceId || 'unknown';
-    if (!bySource.has(key)) bySource.set(key, []);
-    bySource.get(key)!.push(t);
+    const id = String((t as any).id ?? '');
+    if (!id) continue;
+    if (!uniq.has(id)) uniq.set(id, t);
   }
+  const uniqTerms = Array.from(uniq.values());
 
-  // 시작 편향 줄이기 위해 source 순서도 섞음
-  const sourceOrder = shuffle(Array.from(bySource.keys()));
+  // 2) term -> 1개의 QuizItem으로 변환 (desc 우선)
+  const pool: QuizItem[] = [];
+  for (const t of uniqTerms) {
+    const termId = String((t as any).id ?? '');
+    const en = String((t as any).en ?? '').trim();
+    const ko = String((t as any).ko ?? '').trim();
+    const desc = String((t as any).desc ?? '').trim();
 
-  // source별 pool/cursor 준비
-  const pools = new Map<string, PoolItem[]>();
-  const cursors = new Map<string, number>();
+    if (!termId || !en) continue;
 
-  for (const sid of sourceOrder) {
-    const tlist = bySource.get(sid)!;
-    pools.set(sid, makePoolForTerms(tlist));
-    cursors.set(sid, 0);
-  }
+    // ✅ prompt 선택: desc 우선
+    const useDesc = !!desc; // desc가 있으면 무조건 desc
+    const promptText = useDesc ? desc : ko;
 
-  const out: QuizItem[] = [];
-  let turn = 0;
+    if (!promptText) continue; // desc/ko 둘 다 없으면 문제 풀에서 제외
 
-  while (out.length < safeCount) {
-    const sid = sourceOrder[turn % sourceOrder.length];
-    const pool = pools.get(sid)!;
+    const promptType = useDesc ? 'desc' : 'ko';
 
-    if (!pool.length) {
-      turn++;
-      continue;
-    }
-
-    let cursor = cursors.get(sid) ?? 0;
-
-    // pool 끝 넘으면 재섞어서 중복 허용
-    if (cursor >= pool.length) {
-      pools.set(sid, shuffle(pool));
-      cursor = 0;
-    }
-
-    const pick = pools.get(sid)![cursor];
-    cursors.set(sid, cursor + 1);
-
-    const t = pick.term;
-    const promptType = pick.promptType;
-    const promptText = promptType === 'desc' ? t.desc : t.ko;
-
-    out.push({
-      id: `${Date.now()}_q_${out.length}_${Math.random()
-        .toString(16)
-        .slice(2)}`,
-      termId: t.id,
+    pool.push({
+      id: `${termId}:${promptType}`, // termId당 1개만 들어가므로 사실상 유니크
+      termId,
       promptType,
       promptText,
-      answer: t.en,
-      sourceId: t.sourceId,
-      sourceName: t.sourceName,
+      answer: en,
+      sourceId: String((t as any).sourceId ?? ''),
+      sourceName: String((t as any).sourceName ?? ''),
     });
-
-    turn++;
   }
 
-  // 최종 한번 더 섞어서 "완전 랜덤" 느낌 유지
-  return shuffle(out);
+  // 3) 중복 없는 샘플링 (without replacement)
+  const shuffled = shuffle(pool);
+  const n = Math.max(
+    0,
+    Math.min(Math.floor(questionCount || 0), shuffled.length)
+  );
+  return shuffled.slice(0, n);
 }
